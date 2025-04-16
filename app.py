@@ -35,6 +35,9 @@ def whatsapp():
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
 
+    print("UTC saati:", datetime.utcnow())
+    print("Istanbul saati:", datetime.now(pytz.timezone("Europe/Istanbul")))
+
     sheet.append_row([tarih, saat, sender, "Bekliyor"])
 
     resp = MessagingResponse()
