@@ -30,7 +30,6 @@ def extract_datetime(message):
     now = datetime.now(turkey_tz)
     message = message.lower()
 
-    # Tarih belirleme
     if "yarın" in message:
         date = now + timedelta(days=1)
     elif "bugün" in message:
@@ -47,7 +46,7 @@ def extract_datetime(message):
                 date = now + timedelta(days=delta)
                 break
         else:
-            date = now  # default fallback
+            date = now  # fallback
 
     # Saat belirleme
     match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
@@ -55,9 +54,9 @@ def extract_datetime(message):
         hour = int(match.group(1))
         minute = int(match.group(3)) if match.group(3) else 0
         date = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return date.strftime("%d.%m.%Y %H:%M")
+        return date
     else:
-        return "Belirtilmedi"
+        return None
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
@@ -70,9 +69,15 @@ def whatsapp():
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
 
-    randevu_saati = extract_datetime(msg)
+    randevu_datetime = extract_datetime(msg)
+    if randevu_datetime:
+        randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M")
+        durum = "Geçti" if randevu_datetime < now else "Bekliyor"
+    else:
+        randevu_str = "Belirtilmedi"
+        durum = "Bekliyor"
 
-    sheet.append_row([tarih, saat, sender, "Bekliyor", randevu_saati])
+    sheet.append_row([tarih, saat, sender, durum, randevu_str])
 
     resp = MessagingResponse()
     resp.message("Randevu isteğin alındı 📝 En kısa sürede dönüş yapılacaktır.")
