@@ -8,12 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import pytz
 
-turkey_tz = pytz.timezone('Europe/Istanbul')
-now = datetime.now(turkey_tz)
-
-tarih = now.strftime("%d.%m.%Y")
-saat = now.strftime("%H:%M")
-
 app = Flask(__name__)
 
 # Google Sheets bağlantısı
@@ -35,7 +29,9 @@ def whatsapp():
     msg = request.form.get('Body')
     sender = request.form.get('From')
 
-    now = datetime.now()
+    turkey_tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.now(turkey_tz)
+
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
 
