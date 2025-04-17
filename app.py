@@ -23,7 +23,6 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("temp_credentials.json"
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1d5y0kD9DY24-CAnqJkC_oofjLJOsCNhdT9LX22w8El4/edit").sheet1
 
-# Randevu tarihi/saatini çıkartma
 def extract_datetime(message):
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
@@ -56,7 +55,6 @@ def extract_datetime(message):
     else:
         return None
 
-# Mesajı sınıflandır
 def classify_message(msg):
     msg = msg.lower()
     if "fiyat" in msg or "ücret" in msg or "ne kadar" in msg:
@@ -88,11 +86,15 @@ def whatsapp():
     resp = MessagingResponse()
 
     if message_type == "appointment":
-        if randevu_datetime:
-            resp.message(f"📅 Randevu isteğiniz {randevu_str} için alındı. En kısa sürede dönüş yapılacaktır.")
-        else:
+        if not randevu_datetime:
             resp.message("🕒 Randevu için lütfen tarih ve saat belirtin. Örneğin: 'Yarın saat 15:00'")
-        sheet.append_row([tarih, saat, sender, durum, randevu_str])
+        else:
+            randevu_saatleri = sheet.col_values(5)  # E sütunu
+            if randevu_str in randevu_saatleri:
+                resp.message(f"❌ {randevu_str} saati için başka bir randevu bulunuyor. Lütfen başka bir saat önerin.")
+            else:
+                sheet.append_row([tarih, saat, sender, durum, randevu_str])
+                resp.message(f"✅ Randevu isteğiniz {randevu_str} için başarıyla alındı.")
     elif message_type == "price":
         resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
     elif message_type == "location":
@@ -104,7 +106,6 @@ def whatsapp():
 
     return str(resp)
 
-# Ana sayfa (Render için)
 @app.route("/", methods=["GET"])
 def home():
     return "Uygulama çalışıyor ✅"
