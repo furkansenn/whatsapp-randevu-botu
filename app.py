@@ -31,17 +31,19 @@ def extract_datetime(message):
     now = datetime.now(turkey_tz)
     message = message.lower()
 
-    date = now
-    # G/A formatı yakalama (örn: 19/04)
-    match_date = re.search(r"\b(\d{1,2})/(\d{1,2})\b", message)
-    if match_date:
-        day = int(match_date.group(1))
-        month = int(match_date.group(2))
+    match = re.search(r"(\d{1,2})[\/\.](\d{1,2})\s+(\d{1,2})([:\.](\d{2}))?", message)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        hour = int(match.group(3))
+        minute = int(match.group(5)) if match.group(5) else 0
         year = now.year
         try:
-            date = datetime(year, month, day, tzinfo=turkey_tz)
+            return datetime(year, month, day, hour, minute, tzinfo=turkey_tz)
         except ValueError:
-            date = now
+            return None
+
+    return None
 
     # Saat yakalama (örn: 15:00)
     match_time = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
