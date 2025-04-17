@@ -74,7 +74,9 @@ def whatsapp():
     # AD BEKLEME MODU
     if session_memory.get(sender) and isinstance(session_memory[sender], dict) and "awaiting_name" in session_memory[sender]:
         randevu_str = session_memory[sender]["awaiting_name"]
-        durum = "Geçti" if datetime.strptime(randevu_str, "%d.%m.%Y %H:%M") < now else "Bekliyor"
+        turkey_tz = pytz.timezone("Europe/Istanbul")
+        randevu_dt = turkey_tz.localize(datetime.strptime(randevu_str, "%d.%m.%Y %H:%M"))
+        durum = "Geçti" if randevu_dt < now else "Bekliyor"
         sheet.append_row([tarih, saat, sender.replace("whatsapp:", ""), durum, randevu_str, msg.strip()])
         session_memory[sender] = randevu_str
         resp.message(f"✅ Randevunuz {randevu_str} için başarıyla kaydedildi. Teşekkürler {msg.strip()}!")
