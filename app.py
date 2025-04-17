@@ -1,6 +1,5 @@
 import os
 import base64
-import requests
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import gspread
@@ -8,12 +7,19 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import pytz
 import re
+import openai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# DeepSeek API yapılandırması
+openai.api_key = os.getenv("DEEPSEEK_API_KEY")
+openai.base_url = "https://api.deepseek.com"
 
 app = Flask(__name__)
 
 # Google Sheets bağlantısı
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-
 credentials_base64 = os.environ.get("GOOGLE_CREDENTIALS_BASE64")
 credentials_json = base64.b64decode(credentials_base64).decode("utf-8")
 
@@ -24,14 +30,13 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("temp_credentials.json"
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1d5y0kD9DY24-CAnqJkC_oofjLJOsCNhdT9LX22w8El4/edit").sheet1
 
-# Geçici hafıza
+# Kullanıcıya özel geçici veri deposu
 session_memory = {}
 
 def extract_datetime(message):
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
     message = message.lower()
-
     match = re.search(r"(\d{1,2})[\/\.](\d{1,2})\s+(\d{1,2})([:\.](\d{2}))?", message)
     if match:
         day = int(match.group(1))
@@ -60,29 +65,19 @@ def classify_message(msg):
     else:
         return "general"
 
-def ask_deepseek(user_input):
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    url = "https://api.deepseek.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "Sen bir WhatsApp asistanısın. Kullanıcının sorularını kısa ve net cevapla."},
-            {"role": "user", "content": user_input}
-        ]
-    }
-
+def get_smart_reply(user_input):
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"].strip()
-        else:
-            return "❌ Şu anda yanıt veremiyorum, lütfen tekrar dene."
+        response = openai.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Sen bir randevu asistanısın. Kullanıcıya yardım et."},
+                {"role": "user", "content": user_input}
+            ],
+            stream=False
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        return "⚠️ Yanıt oluşturulurken bir hata oluştu."
+        return "❌ Şu anda yanıt veremiyorum, lütfen tekrar dene."
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
@@ -93,7 +88,6 @@ def whatsapp():
     now = datetime.now(turkey_tz)
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
-
     resp = MessagingResponse()
 
     # AD BEKLEME MODU
@@ -142,13 +136,27 @@ def whatsapp():
                 session_memory[sender] = {"awaiting_name": randevu_str}
                 resp.message(f"📛 Yeni randevu saatiniz {randevu_str}. Lütfen isminizi yazın.")
 
-    elif message_type in ["price", "location", "working_hours"]:
-        yanit = ask_deepseek(msg)
-        resp.message(yanit)
+    elif message_type == "price":
+        resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
+
+    elif message_type == "location":
+        resp.message("📍 Adresimiz: https://goo.gl/maps/ornekadres")
+
+    elif message_type == "working_hours":
+        resp.message("⏰ Çalışma saatlerimiz: Hafta içi 10:00 - 18:00, Cumartesi 11:00 - 16:00")
+
+    elif message_type == "general":
+        reply = get_smart_reply(msg)
+        resp.message(reply)
 
     else:
-        yanit = ask_deepseek(msg)
-        resp.message(yanit)
+        resp.message(
+            "Merhaba 👋 Size nasıl yardımcı olabilirim?\n\n"
+            "1️⃣ Randevu almak için **gün/ay saat** formatında yazınız. Örneğin: 19/04 15:00\n"
+            "2️⃣ Fiyat bilgisi için 'fiyat' yazınız\n"
+            "3️⃣ Çalışma saatleri için 'çalışma' yazınız\n"
+            "4️⃣ Adres için 'adres' yazınız"
+        )
 
     return str(resp)
 
