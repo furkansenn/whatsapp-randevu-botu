@@ -31,7 +31,24 @@ def extract_datetime(message):
     now = datetime.now(turkey_tz)
     message = message.lower()
 
-    if "yarın" in message:
+    # Önce net bir tarih ve saat var mı diye kontrol edelim
+    date_match = re.search(r"(\d{1,2})[.\s/-]?(ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)[\s/-]?(\d{4})?", message)
+    day_match = re.search(r"\b(\d{1,2})\s?(ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\b", message)
+    time_match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
+
+    # Ay isimlerini sayıya çevirmek için
+    month_map = {
+        "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
+        "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12
+    }
+
+    # 19 nisan gibi ifadeler varsa
+    if day_match:
+        day = int(day_match.group(1))
+        month = month_map[day_match.group(2)]
+        year = now.year  # varsayılan olarak bu yıl
+        date = datetime(year, month, day, tzinfo=turkey_tz)
+    elif "yarın" in message:
         date = now + timedelta(days=1)
     elif "bugün" in message:
         date = now
@@ -49,14 +66,15 @@ def extract_datetime(message):
         else:
             date = now
 
-    match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
-    if match:
-        hour = int(match.group(1))
-        minute = int(match.group(3)) if match.group(3) else 0
+    # Saat varsa ekle
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(3)) if time_match.group(3) else 0
         date = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
         return date
     else:
         return None
+
 
 def classify_message(msg):
     msg = msg.lower()
@@ -77,6 +95,7 @@ def classify_message(msg):
 def whatsapp():
     msg = request.form.get('Body')
     sender = request.form.get('From')
+    sender = sender.replace("whatsapp:", "")
 
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
