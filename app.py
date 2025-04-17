@@ -14,8 +14,9 @@ load_dotenv()
 print("DEEPSEEK KEY:", os.getenv("DEEPSEEK_API_KEY"))  
 
 # DeepSeek API yapılandırması
-openai.api_key = os.getenv("DEEPSEEK_API_KEY")
-openai.base_url = "https://api.deepseek.com"
+openai.api_key = os.getenv("OPENROUTER_API_KEY")
+openai.base_url = "https://openrouter.ai/api/v1"
+
 
 app = Flask(__name__)
 
@@ -69,7 +70,7 @@ def classify_message(msg):
 def get_smart_reply(user_input):
     try:
         response = openai.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek/deepseek-chat",  # ya da deepseek/deepseek-r1:free
             messages=[
                 {"role": "system", "content": "Sen bir randevu asistanısın. Kullanıcıya yardım et."},
                 {"role": "user", "content": user_input}
@@ -79,6 +80,7 @@ def get_smart_reply(user_input):
         return response.choices[0].message.content.strip()
     except Exception as e:
         return "❌ Şu anda yanıt veremiyorum, lütfen tekrar dene."
+
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
