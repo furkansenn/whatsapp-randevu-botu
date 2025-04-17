@@ -31,7 +31,6 @@ def extract_datetime(message):
     now = datetime.now(turkey_tz)
     message = message.lower()
 
-    # Tarih belirleme
     if "yarın" in message:
         date = now + timedelta(days=1)
     elif "bugün" in message:
@@ -48,14 +47,12 @@ def extract_datetime(message):
                 date = now + timedelta(days=delta)
                 break
         else:
-            # Eğer net bir tarih bilgisi yoksa bugünün tarihiyle devam et
             date = now
 
-    # Saat belirleme (yalnızca saat formatına uyan veriler alınır)
-    match = re.search(r"\b(saat\s*)?(\d{1,2})([:\.](\d{2}))\b", message)
+    match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
     if match:
-        hour = int(match.group(2))
-        minute = int(match.group(4)) if match.group(4) else 0
+        hour = int(match.group(1))
+        minute = int(match.group(3)) if match.group(3) else 0
         date = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
         return date
     else:
@@ -79,7 +76,7 @@ def classify_message(msg):
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     msg = request.form.get('Body')
-    sender = request.form.get('From').replace("whatsapp:", "")
+    sender = request.form.get('From')
 
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
@@ -89,12 +86,16 @@ def whatsapp():
     message_type = classify_message(msg)
     resp = MessagingResponse()
 
+    # İptal isteği
     if message_type == "correction" and sender in session_memory:
         randevu_str = session_memory.pop(sender)
         cell = sheet.find(randevu_str)
         if cell:
             sheet.delete_rows(cell.row)
+        session_memory[sender] = "awaiting_new"  # Yeni tarih bekleniyor
         resp.message("📝 Önceki randevu talebiniz iptal edildi. Yeni tarih ve saati belirtir misiniz?")
+    
+    # Randevu isteği
     elif message_type == "appointment":
         randevu_datetime = extract_datetime(msg)
         randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M") if randevu_datetime else "Belirtilmedi"
@@ -110,6 +111,24 @@ def whatsapp():
                 sheet.append_row([tarih, saat, sender, durum, randevu_str])
                 session_memory[sender] = randevu_str
                 resp.message(f"✅ Randevu isteğiniz {randevu_str} için başarıyla alındı.")
+    
+    # Önceki iptalin ardından gelen tarih-saat cevabını otomatik işleme
+    elif session_memory.get(sender) == "awaiting_new":
+        randevu_datetime = extract_datetime(msg)
+        if not randevu_datetime:
+            resp.message("🕒 Yeni randevu için lütfen tarih ve saat belirtin.")
+        else:
+            randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M")
+            durum = "Geçti" if randevu_datetime < now else "Bekliyor"
+            randevu_saatleri = sheet.col_values(5)
+            if randevu_str in randevu_saatleri:
+                resp.message(f"❌ {randevu_str} saati için başka bir randevu bulunuyor. Lütfen başka bir saat önerin.")
+            else:
+                sheet.append_row([tarih, saat, sender, durum, randevu_str])
+                session_memory[sender] = randevu_str
+                resp.message(f"✅ Yeni randevunuz {randevu_str} olarak güncellendi.")
+
+    # Diğer komutlar
     elif message_type == "price":
         resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
     elif message_type == "location":
