@@ -5,3 +5,4 @@ oauth2client
 pytz
 openai
 python-dotenv
+requests
