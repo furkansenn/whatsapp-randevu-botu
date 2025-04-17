@@ -13,15 +13,18 @@ app = Flask(__name__)
 
 # Google Sheets bağlantısı
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+
 credentials_base64 = os.environ.get("GOOGLE_CREDENTIALS_BASE64")
 credentials_json = base64.b64decode(credentials_base64).decode("utf-8")
+
 with open("temp_credentials.json", "w") as f:
     f.write(credentials_json)
+
 creds = ServiceAccountCredentials.from_json_keyfile_name("temp_credentials.json", scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1d5y0kD9DY24-CAnqJkC_oofjLJOsCNhdT9LX22w8El4/edit").sheet1
 
-# Kullanıcıya özel geçici veri deposu
+# Geçici hafıza
 session_memory = {}
 
 def extract_datetime(message):
@@ -43,43 +46,49 @@ def extract_datetime(message):
     return None
 
 def classify_message(msg):
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
+    msg = msg.lower()
+    if "fiyat" in msg or "ücret" in msg or "ne kadar" in msg:
+        return "price"
+    elif "nerede" in msg or "adres" in msg or "harita" in msg:
+        return "location"
+    elif "kaçta" in msg or "saat kaç" in msg or "çalışma saat" in msg:
+        return "working_hours"
+    elif "randevu" in msg or "gelmek" in msg or "saat" in msg or re.search(r"\d{1,2}/\d{1,2}", msg):
+        return "appointment"
+    elif "yanlış" in msg or "pardon" in msg or "değil" in msg or "değiştir" in msg or "iptal" in msg:
+        return "correction"
+    else:
         return "general"
 
+def ask_deepseek(user_input):
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    url = "https://api.deepseek.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": "Sen bir WhatsApp asistanısın. Kullanıcının sorularını kısa ve net cevapla."},
+            {"role": "user", "content": user_input}
+        ]
+    }
+
     try:
-        url = "https://api.deepseek.com/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-        prompt = (
-            "Sen bir WhatsApp mesaj sınıflayıcısısın. Gelen mesajı aşağıdaki kategorilerden birine ayır:\n\n"
-            "- price: müşteri fiyatla ilgili bilgi soruyorsa\n"
-            "- location: adres veya konum soruyorsa\n"
-            "- working_hours: saat ya da açık olduğu zamanları soruyorsa\n"
-            "- appointment: randevu almak istiyorsa\n"
-            "- correction: daha önceki randevusunu iptal edip yeni bir tarih veriyorsa\n"
-            "- general: diğer tüm mesajlar\n\n"
-            f"Gelen mesaj: \"{msg}\"\n\n"
-            "Sadece kategori ismini döndür (örneğin: appointment)."
-        )
-        data = {
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
-        }
-        response = requests.post(url, headers=headers, json=data)
-        category = response.json()["choices"][0]["message"]["content"].strip().lower()
-        return category
-    except:
-        return "general"
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+        else:
+            return "❌ Şu anda yanıt veremiyorum, lütfen tekrar dene."
+    except Exception as e:
+        return "⚠️ Yanıt oluşturulurken bir hata oluştu."
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     msg = request.form.get('Body')
     sender = request.form.get('From')
+
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
     tarih = now.strftime("%d.%m.%Y")
@@ -87,6 +96,7 @@ def whatsapp():
 
     resp = MessagingResponse()
 
+    # AD BEKLEME MODU
     if session_memory.get(sender) and isinstance(session_memory[sender], dict) and "awaiting_name" in session_memory[sender]:
         randevu_str = session_memory[sender]["awaiting_name"]
         randevu_dt = turkey_tz.localize(datetime.strptime(randevu_str, "%d.%m.%Y %H:%M"))
@@ -132,20 +142,13 @@ def whatsapp():
                 session_memory[sender] = {"awaiting_name": randevu_str}
                 resp.message(f"📛 Yeni randevu saatiniz {randevu_str}. Lütfen isminizi yazın.")
 
-    elif message_type == "price":
-        resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
-    elif message_type == "location":
-        resp.message("📍 Adresimiz: https://goo.gl/maps/ornekadres")
-    elif message_type == "working_hours":
-        resp.message("⏰ Çalışma saatlerimiz: Hafta içi 10:00 - 18:00, Cumartesi 11:00 - 16:00")
+    elif message_type in ["price", "location", "working_hours"]:
+        yanit = ask_deepseek(msg)
+        resp.message(yanit)
+
     else:
-        resp.message(
-            "Merhaba 👋 Size nasıl yardımcı olabilirim?\n\n"
-            "1️⃣ Randevu almak için **gün/ay saat** formatında yazınız. Örneğin: 19/04 15:00\n"
-            "2️⃣ Fiyat bilgisi için 'fiyat' yazınız\n"
-            "3️⃣ Çalışma saatleri için 'çalışma' yazınız\n"
-            "4️⃣ Adres için 'adres' yazınız"
-        )
+        yanit = ask_deepseek(msg)
+        resp.message(yanit)
 
     return str(resp)
 
