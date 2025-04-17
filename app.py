@@ -70,8 +70,11 @@ def classify_message(msg):
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
+    
     msg = request.form.get('Body')
     sender = request.form.get('From')
+    print("📩 Gelen mesaj:", msg)
+    print("📱 Gönderen:", sender)
 
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
