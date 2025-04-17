@@ -23,6 +23,9 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("temp_credentials.json"
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1d5y0kD9DY24-CAnqJkC_oofjLJOsCNhdT9LX22w8El4/edit").sheet1
 
+# Kullanıcıya özel geçici veri deposu (hafıza)
+session_memory = {}
+
 def extract_datetime(message):
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
@@ -65,6 +68,8 @@ def classify_message(msg):
         return "working_hours"
     elif "randevu" in msg or "gelmek" in msg or "saat" in msg:
         return "appointment"
+    elif "yanlış" in msg or "pardon" in msg or "değil" in msg or "değiştir" in msg or "iptal" in msg:
+        return "correction"
     else:
         return "general"
 
@@ -75,25 +80,30 @@ def whatsapp():
 
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
-
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
-    randevu_datetime = extract_datetime(msg)
-    randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M") if randevu_datetime else "Belirtilmedi"
-    durum = "Geçti" if randevu_datetime and randevu_datetime < now else "Bekliyor"
 
     message_type = classify_message(msg)
     resp = MessagingResponse()
 
-    if message_type == "appointment":
+    if message_type == "correction" and sender in session_memory:
+        # Önceki randevuyu silme veya düzeltme fikri
+        session_memory.pop(sender)
+        resp.message("📝 Önceki randevu talebiniz iptal edildi. Yeni tarih ve saati belirtir misiniz?")
+    elif message_type == "appointment":
+        randevu_datetime = extract_datetime(msg)
+        randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M") if randevu_datetime else "Belirtilmedi"
+        durum = "Geçti" if randevu_datetime and randevu_datetime < now else "Bekliyor"
+
         if not randevu_datetime:
             resp.message("🕒 Randevu için lütfen tarih ve saat belirtin. Örneğin: 'Yarın saat 15:00'")
         else:
-            randevu_saatleri = sheet.col_values(5)  # E sütunu
+            randevu_saatleri = sheet.col_values(5)
             if randevu_str in randevu_saatleri:
                 resp.message(f"❌ {randevu_str} saati için başka bir randevu bulunuyor. Lütfen başka bir saat önerin.")
             else:
                 sheet.append_row([tarih, saat, sender, durum, randevu_str])
+                session_memory[sender] = randevu_str
                 resp.message(f"✅ Randevu isteğiniz {randevu_str} için başarıyla alındı.")
     elif message_type == "price":
         resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
