@@ -11,6 +11,7 @@ import openai
 from dotenv import load_dotenv
 
 load_dotenv()
+print("DEEPSEEK KEY:", os.getenv("DEEPSEEK_API_KEY"))  
 
 # DeepSeek API yapılandırması
 openai.api_key = os.getenv("DEEPSEEK_API_KEY")
