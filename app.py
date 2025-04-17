@@ -83,5 +83,9 @@ def whatsapp():
     resp.message("Randevu isteğin alındı 📝 En kısa sürede dönüş yapılacaktır.")
     return str(resp)
 
+@app.route("/", methods=["GET"])
+def home():
+    return "Uygulama çalışıyor ✅"
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
