@@ -31,25 +31,28 @@ def extract_datetime(message):
     now = datetime.now(turkey_tz)
     message = message.lower()
 
-    match = re.search(r"(\d{1,2})[\/\.](\d{1,2})\s+(\d{1,2})([:\.](\d{2}))?", message)
-    if match:
-        day = int(match.group(1))
-        month = int(match.group(2))
-        hour = int(match.group(3))
-        minute = int(match.group(5)) if match.group(5) else 0
+    # Tarih bilgisi (gün/ay)
+    date_match = re.search(r"(\d{1,2})[\/\.](\d{1,2})", message)
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
         year = now.year
         try:
-            return datetime(year, month, day, hour, minute, tzinfo=turkey_tz)
+            date = datetime(year, month, day, tzinfo=turkey_tz)
         except ValueError:
             return None
+    elif "yarın" in message:
+        date = now + timedelta(days=1)
+    elif "bugün" in message:
+        date = now
+    else:
+        date = now
 
-    return None
-
-    # Saat yakalama (örn: 15:00)
-    match_time = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
-    if match_time:
-        hour = int(match_time.group(1))
-        minute = int(match_time.group(3)) if match_time.group(3) else 0
+    # Saat bilgisi
+    match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(3)) if match.group(3) else 0
         date = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
         return date
     else:
@@ -63,10 +66,12 @@ def classify_message(msg):
         return "location"
     elif "kaçta" in msg or "saat kaç" in msg or "çalışma saat" in msg:
         return "working_hours"
-    elif "randevu" in msg or "gelmek" in msg or "saat" in msg or re.search(r"\d{1,2}/\d{1,2}", msg):
+    elif "randevu" in msg or "gelmek" in msg or "saat" in msg:
         return "appointment"
     elif "yanlış" in msg or "pardon" in msg or "değil" in msg or "değiştir" in msg or "iptal" in msg:
         return "correction"
+    elif "randevularım" in msg or "ne zaman" in msg or "randevu listesi" in msg:
+        return "list"
     else:
         return "general"
 
@@ -83,7 +88,6 @@ def whatsapp():
     message_type = classify_message(msg)
     resp = MessagingResponse()
 
-    # İptal isteği
     if message_type == "correction" and sender in session_memory:
         randevu_str = session_memory.pop(sender)
         cell = sheet.find(randevu_str)
@@ -92,24 +96,22 @@ def whatsapp():
         session_memory[sender] = "awaiting_new"
         resp.message("📝 Önceki randevu talebiniz iptal edildi. Yeni tarih ve saati belirtir misiniz?")
 
-    # Randevu isteği
     elif message_type == "appointment":
         randevu_datetime = extract_datetime(msg)
         randevu_str = randevu_datetime.strftime("%d.%m.%Y %H:%M") if randevu_datetime else "Belirtilmedi"
         durum = "Geçti" if randevu_datetime and randevu_datetime < now else "Bekliyor"
 
         if not randevu_datetime:
-            resp.message("🕒 Randevu için lütfen tarih ve saat belirtin. Örneğin: 19/04 15:00")
+            resp.message("🕒 Randevu için lütfen tarih ve saat belirtin. Örneğin: '19/04 15:00'")
         else:
             randevu_saatleri = sheet.col_values(5)
             if randevu_str in randevu_saatleri:
                 resp.message(f"❌ {randevu_str} saati için başka bir randevu bulunuyor. Lütfen başka bir saat önerin.")
             else:
-                sheet.append_row([tarih, saat, sender, durum, randevu_str])
+                sheet.append_row([tarih, saat, sender.replace("whatsapp:", ""), durum, randevu_str])
                 session_memory[sender] = randevu_str
                 resp.message(f"✅ Randevu isteğiniz {randevu_str} için başarıyla alındı.")
 
-    # Önceki iptalin ardından gelen tarih-saat cevabı
     elif session_memory.get(sender) == "awaiting_new":
         randevu_datetime = extract_datetime(msg)
         if not randevu_datetime:
@@ -121,27 +123,35 @@ def whatsapp():
             if randevu_str in randevu_saatleri:
                 resp.message(f"❌ {randevu_str} saati için başka bir randevu bulunuyor. Lütfen başka bir saat önerin.")
             else:
-                sheet.append_row([tarih, saat, sender, durum, randevu_str])
+                sheet.append_row([tarih, saat, sender.replace("whatsapp:", ""), durum, randevu_str])
                 session_memory[sender] = randevu_str
                 resp.message(f"✅ Yeni randevunuz {randevu_str} olarak güncellendi.")
 
-    # Bilgi talepleri
+    elif message_type == "list":
+        rows = sheet.get_all_values()
+        upcoming = []
+        for row in rows[1:]:
+            if sender.replace("whatsapp:", "") in row[2]:
+                try:
+                    rdt = datetime.strptime(row[4], "%d.%m.%Y %H:%M")
+                    if rdt >= now:
+                        upcoming.append(row[4])
+                except:
+                    continue
+        if upcoming:
+            msg_list = "\n".join(f"- {r}" for r in upcoming)
+            resp.message(f"📅 Yaklaşan randevularınız:\n{msg_list}")
+        else:
+            resp.message("❌ Şu anda kayıtlı bir randevunuz bulunmamaktadır.")
+
     elif message_type == "price":
         resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
     elif message_type == "location":
         resp.message("📍 Adresimiz: https://goo.gl/maps/ornekadres")
     elif message_type == "working_hours":
         resp.message("⏰ Çalışma saatlerimiz: Hafta içi 10:00 - 18:00, Cumartesi 11:00 - 16:00")
-
-    # Genel karşılama mesajı
     else:
-        resp.message(
-            "Merhaba 👋 Size nasıl yardımcı olabilirim?\n\n"
-            "1️⃣ Randevu almak için **gün/ay saat** formatında yazınız. Örneğin: 19/04 15:00\n"
-            "2️⃣ Fiyat bilgisi için 'fiyat' yazınız\n"
-            "3️⃣ Çalışma saatleri için 'çalışma' yazınız\n"
-            "4️⃣ Adres için 'adres' yazınız"
-        )
+        resp.message("Merhaba 👋 Size nasıl yardımcı olabilirim? Eğer randevu almak istiyorsanız tarih ve saati **gün/ay saat** formatında yazınız. Örneğin: 19/04 15:00")
 
     return str(resp)
 
