@@ -87,8 +87,11 @@ def whatsapp():
     resp = MessagingResponse()
 
     if message_type == "correction" and sender in session_memory:
-        # Önceki randevuyu silme veya düzeltme fikri
-        session_memory.pop(sender)
+        # Önceki randevu bilgisini sil
+        randevu_str = session_memory.pop(sender)
+        cell = sheet.find(randevu_str)
+        if cell:
+            sheet.delete_rows(cell.row)
         resp.message("📝 Önceki randevu talebiniz iptal edildi. Yeni tarih ve saati belirtir misiniz?")
     elif message_type == "appointment":
         randevu_datetime = extract_datetime(msg)
