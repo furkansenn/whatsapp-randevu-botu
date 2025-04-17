@@ -5,96 +5,95 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
-import openai
-from dotenv import load_dotenv
-
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+import re
+from openai import OpenAI
 
 app = Flask(__name__)
 
 # Google Sheets bağlantısı
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+
+# Ortam değişkeninden gelen base64 string'i çöz ve geçici dosyaya yaz
 credentials_base64 = os.environ.get("GOOGLE_CREDENTIALS_BASE64")
 credentials_json = base64.b64decode(credentials_base64).decode("utf-8")
+
 with open("temp_credentials.json", "w") as f:
     f.write(credentials_json)
+
 creds = ServiceAccountCredentials.from_json_keyfile_name("temp_credentials.json", scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1d5y0kD9DY24-CAnqJkC_oofjLJOsCNhdT9LX22w8El4/edit").sheet1
 
-# OpenAI ile mesaj analiz et
+# OpenAI istemcisi
+client_openai = OpenAI()
+
+# 🧠 Randevu tarihi ve saati yakalayan fonksiyon
+def extract_datetime(message):
+    turkey_tz = pytz.timezone("Europe/Istanbul")
+    now = datetime.now(turkey_tz)
+    message = message.lower()
+
+    # Tarih belirleme
+    if "yarın" in message:
+        date = now + timedelta(days=1)
+    elif "bugün" in message:
+        date = now
+    else:
+        weekdays = {
+            "pazartesi": 0, "salı": 1, "çarşamba": 2, "perşembe": 3,
+            "cuma": 4, "cumartesi": 5, "pazar": 6
+        }
+        for name, day in weekdays.items():
+            if name in message:
+                current_day = now.weekday()
+                delta = (day - current_day + 7) % 7 or 7
+                date = now + timedelta(days=delta)
+                break
+        else:
+            date = now  # default fallback
+
+    # Saat belirleme
+    match = re.search(r"\b(\d{1,2})([:\.](\d{2}))?\b", message)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(3)) if match.group(3) else 0
+        date = date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return date.strftime("%d.%m.%Y %H:%M")
+    else:
+        return "Belirtilmedi"
+
+# 💬 OpenAI ile mesaj analizi
 def analyze_message_with_openai(message):
-    prompt = f"""
-    Kullanıcıdan gelen mesajı aşağıda veriyorum.
-    - Niyetini anlamaya çalış: randevu almak mı, fiyat mı, adres mi, başka bir şey mi?
-    - Eğer tarih ve saat belirtiyorsa, lütfen YYYY-MM-DD HH:MM formatında belirt.
-    - Lütfen sadece aşağıdaki formatta JSON döndür:
-
-    {{
-        "intent": "appointment_request | price_query | location_query | working_hours | general",
-        "datetime": "YYYY-MM-DD HH:MM" (eğer yoksa null yaz),
-        "summary": "Kısa açıklama"
-    }}
-
-    Mesaj: "{message}"
-    """
-
-    response = openai.ChatCompletion.create(
+    response = client_openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        temperature=0.2,
         messages=[
-            {"role": "system", "content": "Sen bir WhatsApp randevu asistanısın."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "Sen bir WhatsApp müşteri destek asistanısın."},
+            {"role": "user", "content": message}
         ]
     )
-
-    result = response.choices[0].message.content
-    return json.loads(result)
+    return response.choices[0].message.content
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     msg = request.form.get('Body')
     sender = request.form.get('From')
 
-    analysis = analyze_message_with_openai(msg)
-    intent = analysis["intent"]
-    randevu_datetime_str = analysis["datetime"]
-    summary = analysis["summary"]
-
     turkey_tz = pytz.timezone("Europe/Istanbul")
     now = datetime.now(turkey_tz)
+
     tarih = now.strftime("%d.%m.%Y")
     saat = now.strftime("%H:%M")
 
+    randevu_saati = extract_datetime(msg)
+    yanit = analyze_message_with_openai(msg)
+
+    sheet.append_row([tarih, saat, sender, yanit, randevu_saati])
+
     resp = MessagingResponse()
-
-    if intent == "appointment_request":
-        if randevu_datetime_str != "null":
-            randevu_dt = datetime.strptime(randevu_datetime_str, "%Y-%m-%d %H:%M")
-            randevu_dt = pytz.utc.localize(randevu_dt).astimezone(turkey_tz)
-            randevu_str = randevu_dt.strftime("%d.%m.%Y %H:%M")
-            durum = "Geçti" if randevu_dt < now else "Bekliyor"
-            sheet.append_row([tarih, saat, sender, durum, randevu_str])
-            resp.message(f"📅 Randevu isteğiniz {randevu_str} için alındı. En kısa sürede dönüş yapılacaktır.")
-        else:
-            resp.message("🕒 Randevu için lütfen tarih ve saat belirtin. Örneğin: 'Yarın saat 15:00'")
-    elif intent == "price_query":
-        resp.message("💸 Fiyatlarımız şu şekildedir: ... (örnek metin)")
-    elif intent == "location_query":
-        resp.message("📍 Adresimiz: https://goo.gl/maps/ornekadres")
-    elif intent == "working_hours":
-        resp.message("⏰ Çalışma saatlerimiz: Hafta içi 10:00 - 18:00, Cumartesi 11:00 - 16:00")
-    else:
-        resp.message("Merhaba 👋 Size nasıl yardımcı olabilirim? Randevu almak istiyorsanız tarih ve saati belirtmeniz yeterlidir.")
-
+    resp.message(yanit)
     return str(resp)
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Uygulama çalışıyor ✅"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
